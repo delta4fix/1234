@@ -1,5 +1,5 @@
 // Modo sin conexión. Al publicar una versión nueva de index.html, cambia VERSION.
-const VERSION = 'v2345-3';
+const VERSION = 'v2345-4';
 const LOCAL = ['./', './index.html', './manifest.webmanifest', './apple-touch-icon.png', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(LOCAL)).then(() => self.skipWaiting()));
