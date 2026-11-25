@@ -8,7 +8,7 @@
   /* =========================================================
      UTILIDADES
      ========================================================= */
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const $ = (s, r = document) => r.querySelector(s);
   const SVGNS = 'http://www.w3.org/2000/svg';
   const DAY = 864e5;
@@ -422,6 +422,12 @@
         h('button', { class: 'btn big', type: 'button', onclick: () => go('practice') }, 'Más juegos')));
     }
 
+    if (words.length) {                       // mazos que aún no has cargado
+      const existing = new Set(words.map(wkey));
+      const pending = Object.entries(DATA.decks).map(([id, d]) => ({ id, d, fresh: deckWords(id).filter(w => !existing.has(wkey(sanitizeWord(w)))).length })).filter(x => x.fresh > 10);
+      if (pending.length) root.append(h('section', { class: 'card decks-card' }, h('strong', null, 'Mazos disponibles'),
+        h('div', { class: 'row wrap' }, pending.map(x => h('button', { class: 'btn', type: 'button', onclick: () => loadDeck(x.id) }, '+ ' + x.d.name + ' (' + x.fresh + ' nuevas)')))));
+    }
     const grid = h('div', { class: 'grid2' });
     if (words.length) {
       const counts = [0, 0, 0, 0, 0, 0];
@@ -441,7 +447,7 @@
     const dmax = Math.max(1, ...daysArr.map(x => x.d.n));
     grid.append(h('section', { class: 'card' }, h('h3', null, 'Actividad (14 días)'),
       h('div', { class: 'spark' }, daysArr.map(x => {
-        const col = h('span', { class: 'col' + (x.d.n ? '' : ' empty') });
+        const col = h('span', { class: 'col' + (x.d.n ? '' : ' zero') });
         col.style.height = Math.max(4, Math.round(100 * x.d.n / dmax)) + 'px';
         return h('div', { class: 'sc', title: x.k + ': ' + x.d.n + ' respuestas' }, col, h('small', null, new Date(x.k + 'T12:00').toLocaleDateString('de-DE', { weekday: 'narrow' })));
       }))));
@@ -849,7 +855,7 @@
       const prompt = it.dir === 'es'
         ? h('div', { class: 'prompt' }, h('span', { class: 'plabel' }, 'Traduce al alemán · ' + TYPES[w.type]), h('div', { class: 'pbig' }, w.es))
         : h('div', { class: 'prompt' }, h('span', { class: 'plabel' }, 'Traduce al español · ' + TYPES[w.type]),
-          h('div', { class: 'pbig de' }, askG ? w.de : nounLabel(w), speakBtn(() => askG ? w.de : nounLabel(w))));
+          h('div', { class: 'pbig de' }, askG ? w.de : nounLabel(w), !askP ? plHint(w) : null, speakBtn(() => askG ? w.de : nounLabel(w))));
 
       const parts = h('div', { class: 'answers' });
       let artSegEl = null;
@@ -965,11 +971,24 @@
   /* =========================================================
      JUEGO: der / die / das
      ========================================================= */
-  function startBlitz() {
+  // Terminación del plural en notación de diccionario: -e, ¨-er, ¨, – (igual), sin pl.
+  function plEnding(w) {
+    if (w.type !== 'n' || !w.pl) return '';
+    if (w.pl === '–') return 'sin pl.';
+    const un = x => x.replace(/äu/g, 'au').replace(/ä/g, 'a').replace(/ö/g, 'o').replace(/ü/g, 'u').replace(/Ä/g, 'A').replace(/Ö/g, 'O').replace(/Ü/g, 'U');
+    if (w.pl === w.de) return '–';
+    if (w.pl.startsWith(w.de)) return '-' + w.pl.slice(w.de.length);
+    if (un(w.pl).startsWith(w.de)) { const suf = w.pl.slice(w.de.length); return suf ? '¨-' + suf : '¨'; }
+    return 'pl. ' + w.pl;
+  }
+  function plHint(w) { const e = plEnding(w); return e ? h('span', { class: 'plhint', title: plLabel(w) }, e) : null; }
+
+  function startBlitz(preset) {
     let nouns = S.words.filter(w => w.type === 'n');
     let tracked = true;
-    if (nouns.length < 10) { nouns = deckWords('basis').filter(w => w.type === 'n'); tracked = false; }
-    const items = shuffle(nouns).slice(0, 20);
+    if (preset) tracked = preset.tracked;
+    else if (nouns.length < 10) { nouns = deckWords('basis').filter(w => w.type === 'n'); tracked = false; }
+    const items = preset ? shuffle(preset.items) : shuffle(nouns).slice(0, 20);
     let i = 0, ok = 0; const errs = []; const t0 = Date.now();
     const g = {};
     g.mount = box => { g.box = box; draw(); };
@@ -987,7 +1006,7 @@
         if (tracked) { w.gOk += right ? 1 : 0; w.gKo += right ? 0 : 1; logAnswer(right); save(); }
         setTimeout(() => { i++; draw(); }, right ? 450 : 1300);
       }
-      const word = h('div', { class: 'blitz-word' }, w.de);
+      const word = h('div', { class: 'blitz-word' }, w.de, plHint(w));
       fill(g.box, 
         gameHeader('der · die · das', i, items.length, exitGame),
         h('section', { class: 'card blitz' }, !tracked ? h('p', { class: 'hint' }, 'Usando el mazo base (tienes menos de 10 sustantivos propios).') : null,
@@ -1002,7 +1021,11 @@
         h('section', { class: 'card summary' },
           h('div', { class: 'score' + (ok / items.length >= .8 ? ' good' : ok / items.length >= .5 ? ' mid' : ' low') }, h('strong', null, ok + ' / ' + items.length), h('span', null, secs + ' s')),
           errs.length ? h('div', null, h('h4', null, 'Fallos'), h('ul', { class: 'mini-list' }, errs.map(w => h('li', null, wordNode(w), h('span', { class: 'muted' }, w.es))))) : h('h3', null, 'Perfekt! 🎯'),
-          h('div', { class: 'row end wrap' }, h('button', { class: 'btn', type: 'button', onclick: exitGame }, 'Juegos'), h('button', { class: 'btn primary', type: 'button', onclick: () => startBlitz() }, 'Otra ronda'))));
+          h('div', { class: 'row end wrap' },
+            h('button', { class: 'btn', type: 'button', onclick: exitGame }, 'Juegos'),
+            errs.length ? h('button', { class: 'btn', type: 'button', onclick: () => startBlitz({ items: errs.slice(), tracked }) }, 'Solo los fallos (' + errs.length + ')') : null,
+            h('button', { class: 'btn', type: 'button', onclick: () => startBlitz({ items: items.slice(), tracked }) }, 'Repetir la misma caja'),
+            h('button', { class: 'btn primary', type: 'button', onclick: () => startBlitz() }, 'Nueva caja'))));
     }
     game = g; go('practice', 'game');
   }

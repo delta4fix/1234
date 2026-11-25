@@ -166,7 +166,7 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 .spark { display: grid; grid-template-columns: repeat(14, 1fr); gap: 6px; height: 130px; align-items: end; margin-top: 10px; }
 .sc { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
 .sc .col { width: 100%; max-width: 22px; background: var(--accent); border-radius: 5px 5px 2px 2px; }
-.sc .col.empty { background: var(--line); }
+.sc .col.zero { background: var(--line); }
 .sc small { font-size: .7rem; color: var(--muted); }
 .mini-list { list-style: none; margin: 6px 0 12px; padding: 0; }
 .mini-list li { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -343,3 +343,8 @@ table.verbs td { white-space: nowrap; }
 .seg .segc-b.on { background: #8dbdff; color: #222; } .seg .segc-p.on { background: #ff9cc8; color: #222; }
 .hl-list { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .hl-item { width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 10px 12px; font-size: 1rem; }
+
+/* Pista de plural y mazos */
+.plhint { font-size: .42em; font-weight: 600; color: var(--pl); opacity: .6; margin-left: .45em; vertical-align: middle; letter-spacing: .02em; white-space: nowrap; }
+.pbig .plhint { font-size: .5em; }
+.decks-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

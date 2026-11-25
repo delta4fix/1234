@@ -1,6 +1,6 @@
 /* Service worker: permite usar la app sin conexión. Solo cachea archivos de la propia app. */
 'use strict';
-const CACHE = 'deutsch-master-v2';
+const CACHE = 'deutsch-master-v3';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'data.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
