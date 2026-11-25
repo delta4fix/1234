@@ -8,7 +8,7 @@
   /* =========================================================
      UTILIDADES
      ========================================================= */
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const $ = (s, r = document) => r.querySelector(s);
   const SVGNS = 'http://www.w3.org/2000/svg';
   const DAY = 864e5;
@@ -131,7 +131,7 @@
   const KEY = 'deutschmaster.v1';
   function defaults() {
     return {
-      v: 1, words: [], days: {}, verbStats: {},
+      v: 1, words: [], days: {}, verbStats: {}, hl: {},
       settings: {
         autoSpeak: true, rate: 0.9, voice: '', lastBackup: 0,
         vocab: { dir: 'mix', mode: 'type', source: 'due', types: ['n', 'v', 'a', 'x'], tag: '', count: 20, askG: true, askP: true },
@@ -182,6 +182,21 @@
       for (const k of Object.keys(d.verbStats)) if (valid.has(k)) {
         const v = d.verbStats[k] || {};
         s.verbStats[k] = { ok: clampInt(v.ok, 0, 1e6), ko: clampInt(v.ko, 0, 1e6) };
+      }
+    }
+    if (d.hl && typeof d.hl === 'object') {           // resaltados de gramática
+      const ids = new Set(DATA.grammar.map(t => t.id));
+      const COL = ['y', 'g', 'b', 'p'];
+      const BAD = ['__proto__', 'constructor', 'prototype'];
+      let n = 0;
+      for (const tid of Object.keys(d.hl)) {
+        const m = d.hl[tid];
+        if (!ids.has(tid) || !m || typeof m !== 'object') continue;
+        for (const k of Object.keys(m)) {
+          const v = m[k];
+          if (n >= 5000 || k.length > 200 || BAD.includes(k) || !v || !COL.includes(v.c)) continue;
+          (s.hl[tid] || (s.hl[tid] = {}))[k] = { c: v.c, t: clean(v.t, 200) }; n++;
+        }
       }
     }
     const st = d.settings || {};
@@ -280,6 +295,7 @@
     if (fn) document.addEventListener('keydown', fn);
   }
   function go(view, sub) {
+    if (view !== 'grammar') hlColor = null;
     route = { view, sub: sub == null ? null : sub };
     render();
     window.scrollTo(0, 0);
@@ -1161,79 +1177,193 @@
      GRAMÁTICA
      ========================================================= */
   const COLCLS = { m: 'c-der', f: 'c-die', n: 'c-das', pl: 'c-pl' };
-  function tableEl(t) {
+  const HL_COLORS = { y: 'Amarillo', g: 'Verde', b: 'Azul', p: 'Rosa' };
+  let hlColor = null;        // color activo del modo resaltar (null = apagado, 'erase' = borrar)
+  let hlJump = null;         // elemento al que saltar tras abrir un tema desde «Mis resaltados»
+
+  // Marca un elemento como resaltable con una clave estable y aplica su color guardado
+  function mark(el, topic, key) {
+    if (!topic) return el;
+    el.dataset.hk = key;
+    const v = S.hl[topic] && S.hl[topic][key];
+    if (v) el.classList.add('hl-' + v.c);
+    return el;
+  }
+  function hlCount(topic) { return topic ? Object.keys(S.hl[topic] || {}).length : DATA.grammar.reduce((a, t) => a + hlCount(t.id), 0); }
+  function hlText(el) {                     // texto con contexto (fila · columna) para la lista de resaltados
+    const txt = x => clean(x ? x.textContent : '', 160);
+    if (el.tagName === 'TD' || el.tagName === 'TH') {
+      const tr = el.parentElement, table = el.closest('table');
+      const idx = Array.prototype.indexOf.call(tr.children, el);
+      const rowHead = idx > 0 ? txt(tr.children[0]) : '';
+      const colHead = table.tHead ? txt(table.tHead.rows[0].children[idx]) : '';
+      return clean((rowHead ? rowHead + ' · ' : '') + (colHead ? colHead + ': ' : '') + txt(el), 200);
+    }
+    return txt(el);
+  }
+
+  function tableEl(t, topic, kp) {
     const cols = t.cols || [];
     const hasHead = t.head && t.head.some(Boolean);
     return h('div', { class: 'tablewrap' }, h('table', { class: 'gram' },
       hasHead ? h('thead', null, h('tr', null, t.head.map((c, i) => h('th', { class: COLCLS[cols[i]] || null }, c)))) : null,
-      h('tbody', null, t.rows.map(r => h('tr', null, r.map((c, i) => h(i === 0 && t.head && t.head[0] === '' ? 'th' : 'td', { class: COLCLS[cols[i]] || null }, rich(c))))))));
+      h('tbody', null, t.rows.map((r, ri) => h('tr', null, r.map((c, i) =>
+        mark(h(i === 0 && t.head && t.head[0] === '' ? 'th' : 'td', { class: COLCLS[cols[i]] || null }, rich(c)), topic, kp + '|t|' + ri + '|' + i)))))));
   }
-  function sectionEl(s) {
+  function sectionEl(s, topic, idx) {
+    const kp = s.h || 's' + idx;
     return h('section', { class: 'card gsec' }, s.h ? h('h3', null, s.h) : null,
-      s.p ? h('p', null, rich(s.p)) : null,
-      s.table ? tableEl(s.table) : null,
-      s.list ? h('ul', { class: 'glist' }, s.list.map(x => h('li', null, rich(x)))) : null,
-      s.note ? h('p', { class: 'gnote' }, rich(s.note)) : null);
+      s.p ? mark(h('p', null, rich(s.p)), topic, kp + '|p') : null,
+      s.table ? tableEl(s.table, topic, kp) : null,
+      s.list ? h('ul', { class: 'glist' }, s.list.map((x, i) => mark(h('li', null, rich(x)), topic, kp + '|l|' + i))) : null,
+      s.note ? mark(h('p', { class: 'gnote' }, rich(s.note)), topic, kp + '|n') : null);
   }
-  function verbTable(list) {
+  function verbTable(list, topic) {
+    const m = (el, v, col) => mark(el, topic, 'verb|' + v.inf + '|' + col);
     return h('div', { class: 'tablewrap' }, h('table', { class: 'gram verbs' },
       h('thead', null, h('tr', null, ['Infinitiv', 'Español', 'Präsens (er)', 'Präteritum', 'Partizip II', ''].map(x => h('th', null, x)))),
-      h('tbody', null, list.map(v => h('tr', null, h('th', null, v.inf), h('td', { class: 'muted' }, v.es), h('td', null, v.pr), h('td', null, v.pt),
-        h('td', null, h('span', { class: 'aux' }, v.aux.startsWith('sein') ? (v.aux.includes('/') ? 'ist/hat' : 'ist') : (v.aux.includes('/') ? 'hat/ist' : 'hat')), ' ', v.p2),
+      h('tbody', null, list.map(v => h('tr', null, m(h('th', null, v.inf), v, 0), m(h('td', { class: 'muted' }, v.es), v, 1), m(h('td', null, v.pr), v, 2), m(h('td', null, v.pt), v, 3),
+        m(h('td', null, h('span', { class: 'aux' }, v.aux.startsWith('sein') ? (v.aux.includes('/') ? 'ist/hat' : 'ist') : (v.aux.includes('/') ? 'hat/ist' : 'hat')), ' ', v.p2), v, 4),
         h('td', null, speakBtn(() => v.inf + ', ' + v.pt + ', ' + v.p2)))))));
   }
-  function dynamicTopic(kind) {
+  function dynamicTopic(kind, topic) {
     const out = [];
     if (kind === 'preps') {
       for (const c of ['A', 'D', 'W', 'G']) {
+        const m = (el, p, col) => mark(el, topic, 'prep|' + p.p + '|' + col);
         out.push(h('section', { class: 'card gsec' }, h('h3', null, CASES[c] + (c === 'W' ? ' — Wechselpräpositionen' : '')),
-          c === 'W' ? h('p', null, rich('**Wohin?** (movimiento / cambio de lugar) → **Akkusativ**. **Wo?** (posición) → **Dativ**.')) : null,
-          c === 'G' ? h('p', null, rich('En el habla informal muchas veces se usan con Dativ (*wegen dem Wetter*), pero lo correcto es el Genitiv.')) : null,
+          c === 'W' ? mark(h('p', null, rich('**Wohin?** (movimiento / cambio de lugar) → **Akkusativ**. **Wo?** (posición) → **Dativ**.')), topic, 'prepnote|W') : null,
+          c === 'G' ? mark(h('p', null, rich('En el habla informal muchas veces se usan con Dativ (*wegen dem Wetter*), pero lo correcto es el Genitiv.')), topic, 'prepnote|G') : null,
           h('div', { class: 'tablewrap' }, h('table', { class: 'gram' }, h('thead', null, h('tr', null, h('th', null, 'Präp.'), h('th', null, 'Español'), h('th', null, 'Ejemplo'))),
-            h('tbody', null, DATA.preps.filter(p => p.c === c).map(p => h('tr', null, h('th', null, p.p), h('td', null, p.es), h('td', null, p.ex, ' ', speakBtn(p.ex.split('→')[0])))))))));
+            h('tbody', null, DATA.preps.filter(p => p.c === c).map(p => h('tr', null, m(h('th', null, p.p), p, 0), m(h('td', null, p.es), p, 1), m(h('td', null, p.ex, ' ', speakBtn(p.ex.split('→')[0])), p, 2))))))));
       }
       out.push(sectionEl({ h: 'Contracciones habituales', table: { head: ['Contracción', 'Forma completa', 'Ejemplo'], rows: [
         ['am', 'an dem', 'am Montag, am Flughafen'], ['ans', 'an das', 'ans Meer'], ['im', 'in dem', 'im Büro'], ['ins', 'in das', 'ins Kino'],
-        ['beim', 'bei dem', 'beim Arzt'], ['vom', 'von dem', 'vom Bahnhof'], ['zum', 'zu dem', 'zum Flughafen'], ['zur', 'zu der', 'zur Arbeit'], ['aufs', 'auf das', 'aufs Land']] } }));
+        ['beim', 'bei dem', 'beim Arzt'], ['vom', 'von dem', 'vom Bahnhof'], ['zum', 'zu dem', 'zum Flughafen'], ['zur', 'zu der', 'zur Arbeit'], ['aufs', 'auf das', 'aufs Land']] } }, topic, 'c'));
       out.push(sectionEl({ h: 'Verbos de posición (Wechselpräpositionen)', table: { head: ['Wohin? + Akk (acción, regular)', 'Wo? + Dat (estado, irregular)'], rows: [
         ['legen (tumbar, poner) — hat gelegt', 'liegen (estar tumbado) — hat gelegen'], ['stellen (poner de pie) — hat gestellt', 'stehen (estar de pie) — hat gestanden'],
         ['setzen (sentar) — hat gesetzt', 'sitzen (estar sentado) — hat gesessen'], ['hängen (colgar) — hat gehängt', 'hängen (estar colgado) — hat gehangen'],
-        ['stecken (meter) — hat gesteckt', 'stecken (estar metido) — hat gesteckt']] } }));
+        ['stecken (meter) — hat gesteckt', 'stecken (estar metido) — hat gesteckt']] } }, topic, 'v'));
       out.push(h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: () => startPrepCase() }, 'Practicar preposiciones'), h('button', { class: 'btn', type: 'button', onclick: () => startCases() }, 'Practicar casos en frases')));
     }
     if (kind === 'verbPreps') {
       let filter = '';
       const tbody = h('tbody');
+      const m = (el, x, col) => mark(el, topic, 'vp|' + x.v + '|' + x.p + '|' + col);
       const draw = () => fill(tbody, ...DATA.verbPreps.filter(x => !filter || x.c === filter).slice().sort((a, b) => a.p.localeCompare(b.p) || a.v.localeCompare(b.v)).map(x =>
-        h('tr', null, h('th', null, x.v), h('td', { class: 'nowrap' }, h('strong', null, x.p), ' + ', h('span', { class: x.c === 'A' ? 'case-a' : 'case-d' }, CASE_SHORT[x.c])), h('td', null, x.es), h('td', null, x.ex, ' ', speakBtn(x.ex)))));
+        h('tr', null, m(h('th', null, x.v), x, 0), m(h('td', { class: 'nowrap' }, h('strong', null, x.p), ' + ', h('span', { class: x.c === 'A' ? 'case-a' : 'case-d' }, CASE_SHORT[x.c])), x, 1),
+          m(h('td', null, x.es), x, 2), m(h('td', null, x.ex, ' ', speakBtn(x.ex)), x, 3))));
       draw();
       out.push(h('section', { class: 'card gsec' },
         h('div', { class: 'row between wrap' }, h('h3', null, 'Verbos con preposición fija'), seg([{ value: '', label: 'Todos' }, { value: 'A', label: '+ Akk' }, { value: 'D', label: '+ Dat' }], '', v => { filter = v; draw(); })),
-        h('p', { class: 'gnote' }, rich('Pregunta por cosas: **wo(r) + preposición** → *Worauf wartest du? — Darauf.* Por personas: *Auf wen wartest du?*')),
+        mark(h('p', { class: 'gnote' }, rich('Pregunta por cosas: **wo(r) + preposición** → *Worauf wartest du? — Darauf.* Por personas: *Auf wen wartest du?*')), topic, 'vpnote'),
         h('div', { class: 'tablewrap' }, h('table', { class: 'gram' }, h('thead', null, h('tr', null, ['Verbo', 'Prep.', 'Español', 'Ejemplo'].map(x => h('th', null, x)))), tbody))));
       out.push(h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: () => startVerbPrep() }, 'Practicar')));
     }
     if (kind === 'verbs') {
       const q = textInput({ type: 'search', placeholder: 'Buscar verbo o significado…', class: 'search' });
       const wrap = h('div');
-      const draw = () => { const f = fold(q.value.trim()); fill(wrap, verbTable(DATA.verbs.filter(v => !f || fold(v.inf + ' ' + v.es + ' ' + v.pt + ' ' + v.p2).includes(f)))); };
+      const draw = () => { const f = fold(q.value.trim()); fill(wrap, verbTable(DATA.verbs.filter(v => !f || fold(v.inf + ' ' + v.es + ' ' + v.pt + ' ' + v.p2).includes(f)), topic)); };
       q.addEventListener('input', draw); draw();
       out.push(h('section', { class: 'card gsec' }, h('div', { class: 'row between wrap' }, h('h3', null, DATA.verbs.length + ' verbos irregulares y separables frecuentes'), q), wrap));
-      out.push(sectionEl({ h: 'Notas', list: DATA.verbNotes }));
+      out.push(sectionEl({ h: 'Notas', list: DATA.verbNotes }, topic, 'n'));
       out.push(h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: () => go('practice', 'verbs') }, 'Practicar verbos')));
     }
     return out;
   }
+
+  /* ---- modo resaltar ---- */
+  function hlToolbar(topic, content) {
+    const bar = h('div', { class: 'hlbar' + (hlColor ? ' active' : '') });
+    function setMode(m) { hlColor = m; content.classList.toggle('hl-mode', !!m); draw(); }
+    function draw() {
+      const n = topic ? hlCount(topic) : 0;
+      bar.classList.toggle('active', !!hlColor);
+      fill(bar,
+        h('span', { class: 'fl' }, 'Resaltar'),
+        Object.entries(HL_COLORS).map(([c, l]) => h('button', { type: 'button', class: 'swatch sw-' + c + (hlColor === c ? ' on' : ''), title: l, 'aria-label': l, 'aria-pressed': String(hlColor === c), onclick: () => setMode(hlColor === c ? null : c) })),
+        h('button', { type: 'button', class: 'swatch erase' + (hlColor === 'erase' ? ' on' : ''), 'aria-pressed': String(hlColor === 'erase'), onclick: () => setMode(hlColor === 'erase' ? null : 'erase') }, 'Borrar'),
+        h('span', { class: 'hl-help' }, hlColor ? (hlColor === 'erase' ? 'Toca lo que quieras desmarcar.' : 'Toca una celda, frase o punto para marcarlo (otra vez para quitarlo).') : (n ? n + ' resaltado' + (n === 1 ? '' : 's') + ' en este tema' : 'Elige un color y toca lo que te cueste recordar.')),
+        hlColor ? h('button', { class: 'btn small', type: 'button', onclick: () => setMode(null) }, 'Hecho') : null,
+        !hlColor && n ? h('button', { class: 'btn small', type: 'button', onclick: async () => {
+          if (await confirmDlg('Quitar resaltados', '¿Quitar los ' + n + ' resaltados de este tema?', 'Quitar', true)) { delete S.hl[topic]; save(); render(); }
+        } }, 'Quitar todos') : null);
+    }
+    bar.redraw = draw;
+    content.classList.toggle('hl-mode', !!hlColor);
+    draw();
+    // Un único manejador para todo el tema
+    content.addEventListener('click', e => {
+      if (!hlColor) return;
+      if (e.target.closest('button, input, select, a')) return;
+      const el = e.target.closest('[data-hk]');
+      if (!el || !content.contains(el)) return;
+      e.preventDefault();
+      const key = el.dataset.hk;
+      if (!key || key === '__proto__' || key === 'constructor' || key === 'prototype') return;
+      const map = S.hl[topic] || (S.hl[topic] = {});
+      const cur = map[key] ? map[key].c : null;
+      const next = hlColor === 'erase' || cur === hlColor ? null : hlColor;
+      Object.keys(HL_COLORS).forEach(c => el.classList.remove('hl-' + c));
+      if (next) { map[key] = { c: next, t: hlText(el) }; el.classList.add('hl-' + next); }
+      else { delete map[key]; if (!Object.keys(map).length) delete S.hl[topic]; }
+      save();
+      draw();
+      updateHLNav();
+    });
+    return bar;
+  }
+  let updateHLNav = () => {};
+  function renderHLOverview() {
+    let filter = '';
+    const wrap = h('div');
+    function draw() {
+      const groups = DATA.grammar.map(t => ({ t, items: Object.entries(S.hl[t.id] || {}).filter(([, v]) => !filter || v.c === filter) })).filter(g => g.items.length);
+      if (!groups.length) {
+        fill(wrap, h('div', { class: 'card empty' }, h('p', null, filter ? 'No hay resaltados de este color.' : 'Aún no has resaltado nada.'),
+          h('p', { class: 'hint' }, 'Abre cualquier tema, elige un color en la barra «Resaltar» y toca las celdas, frases o puntos que te cueste recordar.')));
+        return;
+      }
+      fill(wrap, groups.map(g => h('section', { class: 'card gsec' }, h('div', { class: 'row between' }, h('h3', null, g.t.title), h('span', { class: 'muted' }, g.items.length)),
+        h('ul', { class: 'hl-list' }, g.items.map(([k, v]) => h('li', null, h('button', { type: 'button', class: 'hl-item hl-' + v.c, onclick: () => { hlJump = k; route.sub = g.t.id; render(); } }, v.t || '(sin texto)')))))));
+    }
+    draw();
+    return [
+      h('header', { class: 'vh' }, h('div', null, h('h1', null, 'Mis resaltados'), h('p', { class: 'muted' }, 'Todo lo que has marcado, agrupado por tema. Toca uno para ir a él.'))),
+      h('div', { class: 'row wrap hl-filter' }, seg([{ value: '', label: 'Todos' }].concat(Object.entries(HL_COLORS).map(([c, l]) => ({ value: c, label: l, cls: 'segc-' + c }))), '', v => { filter = v; draw(); })),
+      wrap
+    ];
+  }
   function renderGrammar() {
     const topics = DATA.grammar;
-    const cur = topics.find(t => t.id === route.sub) || topics[0];
-    const listEl = h('nav', { class: 'topics', 'aria-label': 'Temas' }, topics.map(t => h('button', {
-      type: 'button', class: 'topic' + (t === cur ? ' on' : ''), onclick: () => { route.sub = t.id; render(); $('#main').scrollTo?.(0, 0); window.scrollTo(0, 0); }
-    }, h('strong', null, t.title), h('small', null, t.sub))));
-    const content = h('div', { class: 'gcontent' }, h('header', { class: 'vh' }, h('div', null, h('h1', null, cur.title), h('p', { class: 'muted' }, cur.sub))),
-      cur.dynamic ? dynamicTopic(cur.dynamic) : cur.sections.map(sectionEl),
-      ['pronomen', 'artikel', 'possessiv'].includes(cur.id) ? h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: () => startCases() }, 'Practicar casos en frases')) : null);
-    setTimeout(() => listEl.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'center' }), 0);
+    const isHL = route.sub === 'hl';
+    const cur = isHL ? null : (topics.find(t => t.id === route.sub) || topics[0]);
+    const goTopic = id => { route.sub = id; render(); window.scrollTo(0, 0); };
+    const hlBtnCount = h('small', null);
+    const listEl = h('nav', { class: 'topics', 'aria-label': 'Temas' },
+      h('button', { type: 'button', class: 'topic hl-topic' + (isHL ? ' on' : ''), onclick: () => goTopic('hl') }, h('strong', null, '★ Mis resaltados'), hlBtnCount),
+      topics.map(t => h('button', { type: 'button', class: 'topic' + (t === cur ? ' on' : ''), onclick: () => goTopic(t.id) }, h('strong', null, t.title), h('small', null, t.sub))));
+    updateHLNav = () => { const n = hlCount(); hlBtnCount.textContent = n ? n + ' marcado' + (n === 1 ? '' : 's') : 'Repasa lo que te cuesta'; };
+    updateHLNav();
+    let content;
+    if (isHL) {
+      content = h('div', { class: 'gcontent' }, renderHLOverview());
+    } else {
+      content = h('div', { class: 'gcontent' });
+      add(content, [
+        h('header', { class: 'vh' }, h('div', null, h('h1', null, cur.title), h('p', { class: 'muted' }, cur.sub))),
+        hlToolbar(cur.id, content),
+        cur.dynamic ? dynamicTopic(cur.dynamic, cur.id) : cur.sections.map((s, i) => sectionEl(s, cur.id, i)),
+        ['pronomen', 'artikel', 'possessiv'].includes(cur.id) ? h('div', { class: 'row end' }, h('button', { class: 'btn primary', type: 'button', onclick: () => startCases() }, 'Practicar casos en frases')) : null]);
+    }
+    setTimeout(() => {
+      listEl.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+      if (hlJump && !isHL) {
+        const el = Array.from(content.querySelectorAll('[data-hk]')).find(x => x.dataset.hk === hlJump);
+        hlJump = null;
+        if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1800); }
+      }
+    }, 0);
     return h('div', { class: 'view grammar' }, listEl, content);
   }
 
@@ -1254,7 +1384,7 @@
     return true;
   }
   async function exportJSON() {
-    const data = { app: 'deutsch-master', version: 1, exported: new Date().toISOString(), words: S.words, days: S.days, verbStats: S.verbStats };
+    const data = { app: 'deutsch-master', version: 1, exported: new Date().toISOString(), words: S.words, days: S.days, verbStats: S.verbStats, hl: S.hl };
     const ok = await deliver(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), 'deutsch-backup-' + stamp() + '.json');
     if (ok) { S.settings.lastBackup = Date.now(); save(); toast('Copia exportada'); if (route.view !== 'practice') render(); }
   }

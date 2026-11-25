@@ -4,8 +4,9 @@ const FILES = ['./', './index.html', './manifest.json', './icon4-180.png', './ic
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
 });
+// Solo borra cachés antiguas de esta app (app-v…), nunca las de 2345, mm u otras carpetas.
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('app-v') && k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 // Red primero (para recibir actualizaciones); si no hay conexión, caché.
 self.addEventListener('fetch', e => {
